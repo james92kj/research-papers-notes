@@ -61,7 +61,13 @@ The user's Notion paper pool is a database called **"Research Paper Tracker"**:
 
 4. Once picked: fetch the page via `notion-fetch` to confirm the `Paper URL`. If the URL is an arXiv abstract page (`/abs/`), prefer the HTML version (`https://arxiv.org/html/<id>`) or PDF for actual reading — but for paragraph extraction the HTML version is best.
 
-5. **Locate the PDF in Google Drive.** Outbound fetches to arXiv may be blocked by the environment's network policy, so do not rely on direct URL fetching. The user keeps a mirror of every tracked paper in a Google Drive folder named **`research_papers`**, accessible through the Notion connector. Use `notion-search` with `query_type: "internal"` and a query like the paper title (or arXiv ID) to find the matching PDF inside that folder; the connector indexes Google Drive alongside Notion. Prefer an exact title match; fall back to the arXiv ID if the title is ambiguous. Once located, fetch the PDF via `notion-fetch` (pass the Drive file's URL/ID) and read it from there for the skim and deep pass. If no match is found, tell the user which titles you searched for and ask them to drop the PDF into the `research_papers` folder before continuing.
+5. **Fetch the PDF from Google Drive — this is the primary source.** Do NOT try arXiv first; outbound network may be blocked. The user's authoritative paper store is a Google Drive folder named **`research_papers`**, connected to Notion via the official Google Drive connector. Every paper listed in the Research Paper Tracker has a matching PDF in that folder.
+
+   Workflow:
+   - Call `notion-search` with `query_type: "internal"` and `content_search_mode: "ai_search"` (AI search includes connected sources like Google Drive — workspace_search does not). Query with the exact paper title; if no Drive hit appears, retry with the arXiv ID (e.g. `1607.06450`) and then with a content phrase from the abstract.
+   - Drive results appear with `type: "page"` but their URL points to `drive.google.com` or `docs.google.com`. Filter the result set for those hosts; ignore Notion-only pages here.
+   - Once located, pass the Drive file URL (or its ID) to `notion-fetch` to read the PDF text.
+   - If after three queries no Drive result surfaces, do not silently fall back. Tell the user exactly what queries you ran and ask them to (a) verify the Google Drive connector is connected in Notion → Settings → Connections, (b) confirm the folder name, or (c) share a direct Drive link to the PDF.
 
 6. Create the paper workspace:
    - Slug: lowercase, hyphens, ≤50 chars (e.g. `attention-is-all-you-need`)
