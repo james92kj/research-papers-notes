@@ -61,11 +61,13 @@ The user's Notion paper pool is a database called **"Research Paper Tracker"**:
 
 4. Once picked: fetch the page via `notion-fetch` to confirm the `Paper URL`. If the URL is an arXiv abstract page (`/abs/`), prefer the HTML version (`https://arxiv.org/html/<id>`) or PDF for actual reading — but for paragraph extraction the HTML version is best.
 
-5. Create the paper workspace:
+5. **Locate the PDF in Google Drive.** Outbound fetches to arXiv may be blocked by the environment's network policy, so do not rely on direct URL fetching. The user keeps a mirror of every tracked paper in a Google Drive folder named **`research_papers`**, accessible through the Notion connector. Use `notion-search` with `query_type: "internal"` and a query like the paper title (or arXiv ID) to find the matching PDF inside that folder; the connector indexes Google Drive alongside Notion. Prefer an exact title match; fall back to the arXiv ID if the title is ambiguous. Once located, fetch the PDF via `notion-fetch` (pass the Drive file's URL/ID) and read it from there for the skim and deep pass. If no match is found, tell the user which titles you searched for and ask them to drop the PDF into the `research_papers` folder before continuing.
+
+6. Create the paper workspace:
    - Slug: lowercase, hyphens, ≤50 chars (e.g. `attention-is-all-you-need`)
    - Make `<project_root>/workspace/paper_reader/notes/<slug>/` with files `paper.md`, `progress.md`, `glossary.md`
    - Append a row to `<project_root>/workspace/paper_reader/index.md` (create if missing)
-   - Initialize `progress.md` with phase, paper URL, start date, current section
+   - Initialize `progress.md` with phase, paper URL, start date, current section, and the Google Drive PDF URL/ID so resume sessions don't have to re-locate it
 
 **Important:** If the user is *resuming*, skip straight to reading `<project_root>/workspace/paper_reader/notes/<slug>/progress.md` and pick up where they stopped. Do not redo phases the user has already passed.
 
@@ -77,7 +79,7 @@ This is Eugene Yan's "first pass" (see `references/eugene-yan-paper-reading.md`)
 
 **Steps:**
 
-1. Fetch the paper (WebFetch on the HTML version, or read the PDF if HTML unavailable). Identify: title, abstract, intro (first + last paragraph only), conclusion, figure captions.
+1. Fetch the paper. Default route: read the PDF located in Phase 1 step 5 from the Google Drive `research_papers` folder via `notion-fetch`. Only fall back to WebFetch on the arXiv HTML version if the Drive PDF can't be found and the environment has open outbound network. Identify: title, abstract, intro (first + last paragraph only), conclusion, figure captions.
 
 2. Walk the user through them in **plain English**, in this order: title → abstract → figure 1 caption → conclusion → intro framing. **Do not** translate every paragraph yet — this is the skim.
 
