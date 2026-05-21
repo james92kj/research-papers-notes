@@ -1,6 +1,6 @@
 ---
 name: paper-reader
-description: Strict paragraph-by-paragraph reading coach for deep-learning research papers. Picks a paper from the user's Notion "Research Paper Tracker" database, walks them through it one paragraph at a time, building both research-engineer intuition (DeepMind / OpenAI / Anthropic mindset — skepticism, ablations, baselines, scaling, falsifiability) and English fluency (vocabulary notes, paraphrasing). After each paragraph, the user MUST answer a check question before the next paragraph is shown — never batch. Use this whenever the user says "let's read a paper", "help me read X paper", "I want to understand this paper", "pick a paper", "continue the paper", "resume paper reading", "paper club", or names a specific paper from arXiv/their list. Also trigger when the user shares an arXiv link or PDF and asks to walk through it. Persists progress, vocabulary, and a per-paper annotated notes file under `<project_root>/workspace/paper_reader/notes/<paper-slug>/` so sessions can resume cleanly.
+description: Strict paragraph-by-paragraph reading coach for deep-learning research papers. Picks a paper from the user's Google Drive `research_papers` folder (papers live there), cross-checks the Notion "Research Paper Tracker" database to skip already-read papers, then walks the user through one paragraph at a time, building both research-engineer intuition (DeepMind / OpenAI / Anthropic mindset — skepticism, ablations, baselines, scaling, falsifiability) and English fluency (vocabulary notes, paraphrasing). After each paragraph, the user MUST answer a check question before the next paragraph is shown — never batch. Use this whenever the user says "let's read a paper", "help me read X paper", "I want to understand this paper", "pick a paper", "continue the paper", "resume paper reading", "paper club", or names a specific paper from their Drive folder. Also trigger when the user shares an arXiv link or PDF path and asks to walk through it. Persists progress, vocabulary, and a per-paper annotated notes file under `<project_root>/notes/<paper-slug>/` — all committed to git so sessions resume cleanly across machines and notes appear on GitHub.
 ---
 
 # Paper Reader
@@ -32,42 +32,47 @@ Always announce which phase you are entering at the start of the turn.
 
 ## Phase 1 — Pick the paper
 
-The user's Notion paper pool is a database called **"Research Paper Tracker"**:
+The user uploads papers to a **Google Drive folder called `research_papers`** — that is the source of truth for what's available to read.
 
+- Drive folder ID: `1-0VVUHzA2hKJztDnTWZBfA8KSK6T69H_`
+- Drive folder URL: `https://drive.google.com/drive/folders/1-0VVUHzA2hKJztDnTWZBfA8KSK6T69H_`
+- All papers (PDFs, markdown, etc.) the user wants to read live there. The user will keep adding more.
+
+A separate **Notion database** tracks which papers are already read, so we don't waste effort re-reading them:
+
+- Notion DB name: **"Research Paper Tracker"**
 - Data source URL: `collection://0b9ca25f-71f4-49bd-876d-b11a3c762c68`
-- Schema:
-  - `Paper Title` (title)
-  - `Authors` (text)
-  - `Paper URL` (url to PDF / arXiv)
-  - `Section` (select: Core Reading List, Dataset Creation, Additional, monthly buckets like "January 2024" … "November 2024", Infrastructure)
-  - `Topics` (multi-select: Language Models, Retrieval, Fine-tuning & Alignment, Efficiency & Scaling, Code, Vision & Multimodal, Agents & Reasoning, Evaluation, Safety, Speech & Audio, Embeddings, Data, Training, Architecture, General ML)
-  - `Notes Completed` (checkbox)
+- Used ONLY to (a) read `Notes Completed` so we skip done papers, and (b) flip `Notes Completed` to `true` in Phase 4 once a paper is finished.
 
 **Steps:**
 
 1. Ask the user how they want to pick:
-   - "Surprise me" (recommend by section / topic + status)
-   - By **section** (e.g. Core Reading List)
-   - By **topic** (e.g. Language Models)
-   - **Resume** an in-progress paper from `<project_root>/workspace/paper_reader/notes/`
-   - User names a specific paper or pastes an arXiv link (skip Notion entirely)
+   - "Surprise me" (recommend an unread paper from the Drive folder)
+   - **Resume** an in-progress paper from `<project_root>/notes/`
+   - User names a specific paper (e.g. "layer normalization") — fuzzy-match against Drive filenames
+   - User pastes an arXiv link or other URL (skip Drive entirely; download the PDF locally and proceed)
 
-2. Query the Notion database via `mcp__9b804dbf-9b4a-4095-8043-49e04c9480c0__notion-search`:
-   - Use `data_source_url: "collection://0b9ca25f-71f4-49bd-876d-b11a3c762c68"`
-   - Filter on the user's pick (section/topic) by passing the right query terms
-   - Prefer papers where `Notes Completed` is unchecked
+2. List papers in the Drive folder via `mcp__b098c2bb-ce9a-4970-b5c7-60f2413a8bc4__search_files`:
+   - Query: `parentId = '1-0VVUHzA2hKJztDnTWZBfA8KSK6T69H_' and mimeType != 'application/vnd.google-apps.folder'`
+   - Exclude subfolders.
+   - For each candidate paper, look up its title in Notion via `mcp__9b804dbf-9b4a-4095-8043-49e04c9480c0__notion-search` (data_source_url: `collection://0b9ca25f-71f4-49bd-876d-b11a3c762c68`) to check `Notes Completed`.
+   - Rank: unread first, then alphabetical.
 
-3. Show a **numbered list** of up to 10 candidates: `<n>. <Title> — <Authors> [<Topics>]`. Wait for the user to pick a number.
+3. Show a **numbered list** of up to 10 candidates: `<n>. <Title> [<status>]`. Status is `✓ done` if Notion has `Notes Completed = true`, otherwise blank. Wait for the user to pick a number.
 
-4. Once picked: fetch the page via `notion-fetch` to confirm the `Paper URL`. If the URL is an arXiv abstract page (`/abs/`), prefer the HTML version (`https://arxiv.org/html/<id>`) or PDF for actual reading — but for paragraph extraction the HTML version is best.
+4. Once picked: load the paper text via `mcp__b098c2bb-ce9a-4970-b5c7-60f2413a8bc4__read_file_content` using the Drive file ID. Record both the Drive file ID and the Notion page ID (if a matching record exists — otherwise note "none") in `progress.md` for Phase 4.
 
-5. Create the paper workspace:
-   - Slug: lowercase, hyphens, ≤50 chars (e.g. `attention-is-all-you-need`)
-   - Make `<project_root>/workspace/paper_reader/notes/<slug>/` with files `paper.md`, `progress.md`, `glossary.md`
-   - Append a row to `<project_root>/workspace/paper_reader/index.md` (create if missing)
-   - Initialize `progress.md` with phase, paper URL, start date, current section
+5. Create the paper workspace **inside the repo** (so it's versioned and pushable to GitHub):
+   - Slug: lowercase, hyphens, ≤50 chars (e.g. `layer-normalization`)
+   - Make `<project_root>/notes/<slug>/` with files `paper.md`, `progress.md`, `glossary.md`
+   - Append a row to `<project_root>/README.md` (create if missing)
+   - Initialize `progress.md` with phase, Drive file ID, Notion page ID, start date, current section
 
-**Important:** If the user is *resuming*, skip straight to reading `<project_root>/workspace/paper_reader/notes/<slug>/progress.md` and pick up where they stopped. Do not redo phases the user has already passed.
+6. Commit the new workspace files to git so they survive container teardown and show up on GitHub:
+   - `git add notes/<slug>/ README.md && git commit -m "notes(<slug>): start paper reader"`
+   - Push at session end (Phase 4 or pause), not after every commit, to keep noise down.
+
+**Important:** If the user is *resuming*, skip straight to reading `<project_root>/notes/<slug>/progress.md` and pick up where they stopped. Do not redo phases the user has already passed.
 
 ---
 
@@ -150,7 +155,7 @@ When the next "paragraph" is really a figure or a table:
 
 ### When the user wants a break
 
-If the user says "stop", "pause", "resume tomorrow", or similar: update `progress.md` with the current paragraph and a one-line "what's next" note, then confirm "Saved. Resume any time by saying 'resume <paper slug>' or just 'continue paper'."
+If the user says "stop", "pause", "resume tomorrow", or similar: update `progress.md` with the current paragraph and a one-line "what's next" note, commit and push (`git add notes/<slug>/ README.md && git commit -m "notes(<slug>): pause at paragraph <N>" && git push -u origin <branch>`), then confirm "Saved and pushed. Resume any time by saying 'resume <paper slug>' or just 'continue paper'."
 
 ---
 
@@ -170,21 +175,26 @@ Triggered when the last paragraph is done.
 
 4. Ask the user: "What is **one** thing about this paper that you'd push back on, or want to test in your own work?" — train the "what would falsify this?" muscle.
 
-5. Save the final synthesis to `<project_root>/workspace/paper_reader/notes/<slug>/synthesis.md`. Mark the paper `done` in `progress.md` and update `<project_root>/workspace/paper_reader/index.md`.
+5. Save the final synthesis to `<project_root>/notes/<slug>/synthesis.md`. Mark the paper `done` in `progress.md` and update the row in `<project_root>/README.md`.
 
-6. **Update the Notion record** (optional, ask first): set `Notes Completed` to `true` for that paper via the Notion update tool. Ask the user before flipping it.
+6. **Update the Notion record** (ask the user first, then do it): set `Notes Completed` to `true` for that paper via `mcp__9b804dbf-9b4a-4095-8043-49e04c9480c0__notion-update-page`, using the Notion page ID stored in `progress.md`. This is what prevents the same paper being picked again in Phase 1. If `progress.md` shows Notion page ID = `none`, offer to create a new row in the "Research Paper Tracker" with the paper's title, authors, Drive URL, and `Notes Completed = true` via `notion-create-pages`.
 
-7. Surface **cross-paper weak spots**: scan `index.md` and `glossary.md` for recurring themes the user has struggled with (e.g. "you've now hit attention-mask details in 3 papers — want a short focused walkthrough of attention masking before the next paper?"). Don't push, just offer.
+7. **Commit and push** the final notes to GitHub:
+   - `git add notes/<slug>/ README.md`
+   - `git commit -m "notes(<slug>): synthesis complete"`
+   - `git push -u origin <current-branch>` (retry up to 4 times with exponential backoff on network failure)
+
+8. Surface **cross-paper weak spots**: scan `README.md` and each paper's `glossary.md` for recurring themes the user has struggled with (e.g. "you've now hit attention-mask details in 3 papers — want a short focused walkthrough of attention masking before the next paper?"). Don't push, just offer.
 
 ---
 
 ## File layout (per paper)
 
-All paper-reader artifacts live inside the **current project's** `workspace/paper_reader/` directory. `<project_root>` below means whatever directory Claude was invoked from. If `workspace/paper_reader/` doesn't exist yet, create it. Skill definitions stay at `~/.claude/skills/paper-reader/` — only the runtime outputs go in `workspace/`.
+All paper-reader artifacts live inside the **current project** and are **committed to git** so the user can browse them on GitHub and resume across machines/sessions (containers are ephemeral — anything not committed is lost). The top-level `README.md` is the user-facing tracker; per-paper notes live in `notes/<slug>/`. `<project_root>` below means whatever directory Claude was invoked from. Skill definitions stay at `.claude/skills/paper-reader/` — only the runtime outputs go in `README.md` and `notes/`.
 
 ```
-<project_root>/workspace/paper_reader/
-├── index.md                          # all papers, statuses, weak-spot patterns
+<project_root>/
+├── README.md                         # top-level: paper tracker table + cross-paper weak spots
 └── notes/
     └── <paper-slug>/
         ├── paper.md                  # the running paragraph-by-paragraph annotated reading
@@ -193,12 +203,20 @@ All paper-reader artifacts live inside the **current project's** `workspace/pape
         └── synthesis.md              # written in Phase 4
 ```
 
+**Commit and push cadence:**
+- Commit at natural checkpoints: end of Phase 2 (skim done), every ~5 paragraphs during Phase 3, on user-requested pause, and at Phase 4 synthesis. Avoid committing after every single paragraph — too noisy.
+- Use clear messages: `notes(<slug>): start`, `notes(<slug>): skim complete`, `notes(<slug>): finished section "Method"`, `notes(<slug>): synthesis complete`.
+- Push to `origin <current-branch>` at session pause and at Phase 4 completion. Use `git push -u origin <branch>`; on network failure retry up to 4 times with 2s → 4s → 8s → 16s backoff.
+- Do **not** commit full PDF/binary copies of the paper — the user already has the source in Drive. `paper.md` should contain the user's notes + rephrased excerpts (fair use), not the verbatim full text of a paywalled paper.
+
 **`progress.md` template** (keep tight — this is what `resume` reads):
 
 ```
 # <Paper Title>
 
-- URL: <paper url>
+- Drive file ID: <id>
+- Notion page ID: <id or "none">
+- Source URL: <Drive view URL or arXiv link>
 - Started: <date>
 - Phase: <pick | skim | deep | synthesis | done>
 - Current section: <Introduction | Method | … >
@@ -215,18 +233,30 @@ All paper-reader artifacts live inside the **current project's** `workspace/pape
 - **<term>** — <plain English meaning>. Example: <one-sentence usage>. First seen: paragraph <N>.
 ```
 
-**`index.md` template** (top-level):
+**`README.md` template** (the user-facing tracker on GitHub — lives at the repo root):
 
 ```
-# Paper reader — index
+# Research Papers — Notes
 
-| Paper | Section/Topic | Status | Started | Last touched |
-|---|---|---|---|---|
-| <title> | <section/topic> | <phase> | <date> | <date> |
+Paragraph-by-paragraph reading notes generated by the `paper-reader` skill.
+Papers come from the Google Drive `research_papers` folder; finished papers are also flagged in the Notion "Research Paper Tracker" to avoid duplicate reads.
+
+## Tracker
+
+| # | Paper | Authors | Status | Phase | Started | Last touched | Synthesis |
+|---|---|---|---|---|---|---|---|
+| 1 | [<Title>](notes/<slug>/paper.md) | <Authors> | <reading / done> | <pick / skim / deep / synthesis / done> | <YYYY-MM-DD> | <YYYY-MM-DD> | [link](notes/<slug>/synthesis.md) |
 
 ## Cross-paper weak spots (rolling)
+
 - <topic>: seen in <N> papers — <one-line note>
 ```
+
+**Maintenance rules for the README table:**
+- Add a new row in Phase 1 when a paper is picked.
+- Update `Status`, `Phase`, and `Last touched` at every phase transition and at each commit checkpoint.
+- Sort rows by `Last touched` descending so the most recent paper is at the top.
+- The `Paper` cell links to `notes/<slug>/paper.md`; the `Synthesis` cell links to `notes/<slug>/synthesis.md` (leave blank until Phase 4 finishes).
 
 ---
 
@@ -234,7 +264,7 @@ All paper-reader artifacts live inside the **current project's** `workspace/pape
 
 When the user says `resume`, `continue`, `keep going on <paper>`, or similar:
 
-1. If a paper isn't named, list in-progress papers from `<project_root>/workspace/paper_reader/notes/*/progress.md` (those whose `Phase` is not `done`). Ask which one.
+1. If a paper isn't named, list in-progress papers from `<project_root>/notes/*/progress.md` (those whose `Phase` is not `done`). Ask which one.
 2. Read that paper's `progress.md` AND the last full paragraph block from `paper.md` to reload context.
 3. Briefly say: "Picking back up on **<title>**, paragraph **<N>**, **<section>**. Last paragraph we covered was about **<one-line recap>**. Ready?"
 4. Wait for the user to confirm, then continue with the next paragraph using the five-part template.
